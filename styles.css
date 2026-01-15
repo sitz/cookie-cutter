@@ -1,0 +1,309 @@
+/* Cookie Cutter - CSS Rules to Hide Cookie Popups */
+/* These rules are injected into all pages to hide cookie banners */
+
+/* ================================
+   Major CMP Frameworks
+   ================================ */
+
+/* OneTrust */
+#onetrust-consent-sdk,
+#onetrust-banner-sdk,
+.onetrust-pc-dark-filter,
+.ot-fade-in {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Cookiebot */
+#CybotCookiebotDialog,
+#CybotCookiebotDialogBodyUnderlay,
+.CybotCookiebotDialogActive {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* TrustArc */
+.truste_box_overlay,
+.truste_overlay,
+#truste-consent-track,
+#truste-consent-content,
+.trustarc-banner-container {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* CookieYes */
+.cky-consent-container,
+.cky-overlay,
+.cky-modal {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* iubenda */
+#iubenda-cs-banner,
+.iubenda-cs-container,
+.iubenda-cs-overlay {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Usercentrics */
+#usercentrics-root,
+.uc-banner-modal,
+.uc-modal-backdrop {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Quantcast Choice */
+.qc-cmp2-container,
+.qc-cmp2-consent-info,
+.qc-cmp-ui-container {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Didomi */
+#didomi-popup,
+#didomi-host,
+.didomi-popup-backdrop,
+.didomi-popup-container {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Osano */
+.osano-cm-window,
+.osano-cm-dialog,
+.osano-cm-overlay {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Klaro */
+.klaro .cookie-notice,
+.klaro .cookie-modal {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Termly */
+#termly-code-snippet-support,
+.termly-consent-banner {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Substack / Pencraft */
+[class*="cookieBanner"],
+.pencraft [class*="cookie"],
+[class*="SubstackCookie"],
+.cookie-consent-substack {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Sourcepoint */
+[class*="sp_message_container"],
+.message-component.message-row,
+div[id^="sp_message_container"] {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* HubSpot */
+#hs-eu-cookie-confirmation,
+.hs-cookie-notification-wrapper {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* ================================
+   Generic Cookie Banner Patterns
+   ================================ */
+
+/* Common class names */
+.cookie-banner,
+.cookie-consent,
+.cookie-notice,
+.cookie-popup,
+.cookie-modal,
+.cookie-overlay,
+.cookie-message,
+.cookie-warning,
+.cookie-bar,
+.cookie-law,
+.cookie-disclaimer,
+.cookie-notification,
+.cookie-alert,
+.cookie-accept,
+.cookie-policy-banner,
+.cookie-gdpr,
+.cookies-banner,
+.cookies-popup,
+.cookies-notice,
+.cookies-overlay,
+.cookies-modal {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* GDPR specific */
+.gdpr-banner,
+.gdpr-popup,
+.gdpr-modal,
+.gdpr-overlay,
+.gdpr-notice,
+.gdpr-consent,
+.gdpr-cookie-notice,
+.gdpr-container {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Consent specific */
+.consent-banner,
+.consent-popup,
+.consent-modal,
+.consent-overlay,
+.consent-notice,
+.consent-container,
+.consent-manager,
+.consent-bar {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Privacy specific */
+.privacy-banner,
+.privacy-popup,
+.privacy-modal,
+.privacy-notice,
+.privacy-consent {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Common ID patterns */
+#cookie-banner,
+#cookie-consent,
+#cookie-notice,
+#cookie-popup,
+#cookie-modal,
+#cookie-bar,
+#cookie-law,
+#cookie-message,
+#cookie-notification,
+#cookieBanner,
+#cookieConsent,
+#cookieNotice,
+#cookiePopup,
+#cookieModal,
+#cookieBar,
+#cookies-banner,
+#cookies-popup,
+#cookies-notice,
+#gdpr-banner,
+#gdpr-popup,
+#gdpr-consent,
+#consent-banner,
+#consent-popup,
+#consent-modal,
+#privacy-banner,
+#privacy-popup {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Data attribute patterns */
+[data-cookie-banner],
+[data-cookie-consent],
+[data-gdpr],
+[data-consent-banner],
+[data-cookieconsent],
+[aria-label*="cookie" i],
+[aria-label*="consent" i],
+[aria-label*="gdpr" i] {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* ================================
+   Overlay & Backdrop Removal
+   ================================ */
+
+/* Common overlay patterns that block interaction */
+.modal-backdrop.cookie,
+.overlay.cookie,
+.backdrop.cookie,
+[class*="cookie-overlay"],
+[class*="consent-overlay"],
+[class*="gdpr-overlay"],
+[id*="cookie-overlay"],
+[id*="consent-overlay"] {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* ================================
+   Body Scroll Fix
+   ================================ */
+
+/* Prevent cookie banners from blocking scroll */
+html.cookie-consent-active,
+html.cookie-modal-open,
+html.gdpr-active,
+body.cookie-consent-active,
+body.cookie-modal-open,
+body.gdpr-active,
+body.modal-open-cookie,
+body.no-scroll-cookie {
+  overflow: auto !important;
+  position: static !important;
+}
+
+/* ================================
+   EU Cookie Law Widget
+   ================================ */
+#eu-cookie-law,
+.eu-cookie-law,
+.eucookielaw,
+#eucookie,
+.eucookie {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* ================================
+   Cookie Script
+   ================================ */
+#cookiescript_injected,
+#cookiescript_injected_wrapper,
+.cookiescript_show {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* ================================
+   Complianz */
+   ================================ */
+#cmplz-cookiebanner-container,
+.cmplz-cookiebanner,
+.cmplz-blocked-content-notice {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* ================================
+   Cookie Information (CIVIC)
+   ================================ */
+#ccc,
+#ccc-overlay,
+.ccc-overlay,
+#catapult-cookie-bar {
+  display: none !important;
+  visibility: hidden !important;
+}

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cookie Cutter</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="16" cy="16" r="14" fill="#D4A574"/>
+          <circle cx="10" cy="12" r="2" fill="#6B4423"/>
+          <circle cx="18" cy="10" r="1.5" fill="#6B4423"/>
+          <circle cx="22" cy="16" r="2" fill="#6B4423"/>
+          <circle cx="12" cy="20" r="1.5" fill="#6B4423"/>
+          <circle cx="19" cy="22" r="2" fill="#6B4423"/>
+          <circle cx="8" cy="16" r="1" fill="#6B4423"/>
+        </svg>
+      </div>
+      <h1>Cookie Cutter</h1>
+    </header>
+
+    <div class="toggle-section">
+      <span class="toggle-label">Auto-Accept Cookies</span>
+      <label class="toggle">
+        <input type="checkbox" id="enableToggle" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="status-section">
+      <div class="status-item">
+        <span class="status-icon">🍪</span>
+        <div class="status-info">
+          <span class="status-label">Cookies Accepted</span>
+          <span class="status-value" id="totalAccepted">0</span>
+        </div>
+      </div>
+      <div class="status-item">
+        <span class="status-icon">🌐</span>
+        <div class="status-info">
+          <span class="status-label">Sites Processed</span>
+          <span class="status-value" id="sitesProcessed">0</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="current-status" id="currentStatus">
+      <span class="status-dot active"></span>
+      <span>Active on this page</span>
+    </div>
+
+    <footer class="footer">
+      <p>Automatically accepts cookie popups so you don't have to.</p>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
