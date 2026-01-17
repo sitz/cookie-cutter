@@ -16,7 +16,7 @@
     let isEnabled = true;
     let hasAccepted = false;
     let clickCount = 0;
-    const MAX_CLICKS = 3; // Prevent infinite click loops
+    const MAX_CLICKS = 1; // Only click once - be conservative
 
     // ================================
     // Internationalized Accept Keywords
@@ -53,11 +53,54 @@
         'settings', 'preferences', 'customize', 'customise', 'manage', 'options',
         'reject', 'decline', 'deny', 'refuse', 'necessary only', 'essential only',
         'read more', 'find out', 'details', 'about cookies', 'more information',
-        'datenschutz', 'impressum', 'cookie settings', 'manage cookies'
+        'datenschutz', 'impressum', 'cookie settings', 'manage cookies',
+        // Social/Auth buttons that should NEVER be clicked
+        'follow', 'following', 'unfollow', 'subscribe', 'unsubscribe',
+        'sign up', 'sign in', 'login', 'log in', 'log out', 'logout', 'register',
+        'like', 'retweet', 'share', 'comment', 'reply', 'post', 'tweet',
+        'add friend', 'connect', 'message', 'dm', 'download', 'install', 'buy', 'purchase',
+        'add to cart', 'checkout', 'pay', 'donate', 'join', 'apply', 'submit'
     ];
 
     // Cookie-related context keywords (for scoring parent elements)
     const CONTEXT_KEYWORDS = /cookie|consent|gdpr|privacy|banner|notice|ccpa|dsgvo/i;
+
+    // ================================
+    // Mandatory Cookie Context Validation
+    // A button will NEVER be clicked unless this returns true
+    // ================================
+
+    function hasCookieContextInHierarchy(element) {
+        let current = element;
+        let depth = 0;
+        const MAX_DEPTH = 10;
+
+        while (current && depth < MAX_DEPTH) {
+            // Check class and id attributes
+            const classId = ((current.className || '') + ' ' + (current.id || '')).toLowerCase();
+            if (CONTEXT_KEYWORDS.test(classId)) {
+                return true;
+            }
+
+            // Check aria-label and title attributes
+            const ariaLabel = (current.getAttribute?.('aria-label') || '').toLowerCase();
+            const title = (current.getAttribute?.('title') || '').toLowerCase();
+            if (CONTEXT_KEYWORDS.test(ariaLabel) || CONTEXT_KEYWORDS.test(title)) {
+                return true;
+            }
+
+            // Check text content of current element only (avoid deep nesting)
+            // Use innerText to get visible text, limit check to reasonable container size
+            const text = (current.innerText || '').toLowerCase().slice(0, 1000);
+            if (/cookie|consent|gdpr|privacy policy/i.test(text) && text.length < 500) {
+                return true;
+            }
+
+            current = current.parentElement;
+            depth++;
+        }
+        return false;
+    }
 
     // ================================
     // Fast-Path CMP Configs (Minimal)
@@ -497,10 +540,16 @@
             }
         }
 
-        // Minimum threshold to click
-        const THRESHOLD = 35;
+        // Minimum threshold to click (raised for safety)
+        const THRESHOLD = 50;
 
         if (globalBestScore >= THRESHOLD && globalBestButton) {
+            // CRITICAL: Never click unless cookie context is confirmed in DOM hierarchy
+            if (!hasCookieContextInHierarchy(globalBestButton)) {
+                log(`REJECTED: No cookie context in hierarchy for "${getElementText(globalBestButton)}"`);
+                return false;
+            }
+
             log(`Clicking button with score ${globalBestScore}: "${getElementText(globalBestButton)}"`);
             globalBestButton.click();
             clickCount++;
