@@ -17,6 +17,16 @@
     // ================================
 
     const CMP_CONFIGS = [
+        // Framer Cookie Banner (tebi.com, etc.)
+        {
+            name: 'Framer',
+            detect: () => document.querySelector('#__framer-cookie-component-button-accept, .__framer-cookie-component-button'),
+            accept: () => {
+                const btn = document.querySelector('#__framer-cookie-component-button-accept');
+                if (btn) { btn.click(); return true; }
+                return false;
+            }
+        },
         // OneTrust
         {
             name: 'OneTrust',
@@ -347,6 +357,15 @@
         '✖'
     ];
 
+    // Keywords that indicate a link leads to a policy/settings page (should not be clicked)
+    const POLICY_LINK_KEYWORDS = [
+        'policy', 'privacy', 'terms', 'conditions', 'learn more',
+        'more info', 'more information', 'details', 'about cookies',
+        'read more', 'find out', 'cookie settings', 'manage', 'preferences',
+        'customize', 'customise', 'options', 'datenschutz', 'impressum',
+        'how we use', 'why we use', 'what are cookies', 'settings'
+    ];
+
     // Elements that commonly contain cookie banners
     const BANNER_SELECTORS = [
         '[class*="cookie"]',
@@ -400,9 +419,10 @@
     }
 
     function findButtonByText(keywords, container = document) {
-        const buttons = container.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]');
+        // First priority: actual buttons and inputs (not links) - these are safe to click
+        const realButtons = container.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]');
 
-        for (const btn of buttons) {
+        for (const btn of realButtons) {
             if (!isVisible(btn)) continue;
 
             const text = (btn.textContent || btn.value || btn.innerText || '').toLowerCase().trim();
@@ -415,6 +435,31 @@
                 }
             }
         }
+
+        // Second priority: links (with strict filtering to avoid policy/navigation links)
+        const links = container.querySelectorAll('a');
+        for (const link of links) {
+            if (!isVisible(link)) continue;
+
+            const text = (link.textContent || link.innerText || '').toLowerCase().trim();
+            const href = (link.getAttribute('href') || '').toLowerCase();
+
+            // Skip if link looks like it navigates to a policy/settings page
+            const isPolicyLink = POLICY_LINK_KEYWORDS.some(keyword =>
+                text.includes(keyword) || href.includes(keyword)
+            );
+            if (isPolicyLink) continue;
+
+            const ariaLabel = (link.getAttribute('aria-label') || '').toLowerCase();
+            const title = (link.getAttribute('title') || '').toLowerCase();
+
+            for (const keyword of keywords) {
+                if (text.includes(keyword) || ariaLabel.includes(keyword) || title.includes(keyword)) {
+                    return link;
+                }
+            }
+        }
+
         return null;
     }
 
