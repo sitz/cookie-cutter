@@ -1,90 +1,113 @@
 /**
  * Cookie Cutter - Content Script
  * Automatically detects and accepts cookie consent popups
+ * 
+ * Uses a generalized, context-aware scoring system instead of
+ * hard-coded CMP framework rules.
  */
 
 (function () {
     'use strict';
 
-    // Check if extension is enabled
+    // ================================
+    // Configuration
+    // ================================
+
     let isEnabled = true;
-
-    // Flag to prevent multiple accepts
     let hasAccepted = false;
+    let clickCount = 0;
+    const MAX_CLICKS = 3; // Prevent infinite click loops
 
     // ================================
-    // CMP Framework Configurations
+    // Internationalized Accept Keywords
+    // Same index = same phrase across languages
     // ================================
 
-    const CMP_CONFIGS = [
+    const ACCEPT_KEYWORDS = {
+        // Index: 0=accept all, 1=accept cookies, 2=accept & continue, 3=agree to all, 
+        //        4=allow all, 5=i agree, 6=i accept, 7=got it, 8=ok, 9=yes, 10=continue, 11=understood
+        en: ['accept all', 'accept cookies', 'accept & continue', 'agree to all', 'allow all', 'i agree', 'i accept', 'got it', 'ok', 'yes', 'continue', 'understood'],
+        de: ['alle akzeptieren', 'cookies akzeptieren', 'akzeptieren & weiter', 'allen zustimmen', 'alle zulassen', 'ich stimme zu', 'ich akzeptiere', 'verstanden', 'ok', 'ja', 'weiter', 'verstanden'],
+        fr: ['tout accepter', 'accepter les cookies', 'accepter et continuer', 'accepter tout', 'tout autoriser', "j'accepte", "j'accepte", 'compris', 'ok', 'oui', 'continuer', 'compris'],
+        es: ['aceptar todo', 'aceptar cookies', 'aceptar y continuar', 'aceptar todo', 'permitir todo', 'acepto', 'acepto', 'entendido', 'ok', 'sí', 'continuar', 'entendido'],
+        pt: ['aceitar tudo', 'aceitar cookies', 'aceitar e continuar', 'concordar com tudo', 'permitir tudo', 'eu concordo', 'eu aceito', 'entendi', 'ok', 'sim', 'continuar', 'entendido'],
+        it: ['accetta tutto', 'accetta i cookie', 'accetta e continua', 'accetta tutto', 'consenti tutto', 'accetto', 'accetto', 'capito', 'ok', 'sì', 'continua', 'capito'],
+        nl: ['alles accepteren', 'cookies accepteren', 'accepteren en doorgaan', 'alles accepteren', 'alles toestaan', 'ik ga akkoord', 'ik accepteer', 'begrepen', 'ok', 'ja', 'doorgaan', 'begrepen'],
+        pl: ['zaakceptuj wszystkie', 'zaakceptuj cookies', 'zaakceptuj i kontynuuj', 'zgadzam się na wszystko', 'zezwól na wszystko', 'zgadzam się', 'akceptuję', 'rozumiem', 'ok', 'tak', 'kontynuuj', 'rozumiem'],
+        ru: ['принять все', 'принять cookies', 'принять и продолжить', 'согласиться со всем', 'разрешить все', 'я согласен', 'я принимаю', 'понятно', 'ок', 'да', 'продолжить', 'понятно'],
+        ja: ['すべて受け入れる', 'クッキーを受け入れる', '同意して続行', 'すべてに同意', 'すべて許可', '同意する', '承諾する', '了解', 'ok', 'はい', '続行', '了解'],
+        zh: ['全部接受', '接受cookies', '接受并继续', '全部同意', '全部允许', '我同意', '我接受', '知道了', '好', '是', '继续', '明白']
+    };
+
+    // Build flattened keyword list for matching
+    const ALL_ACCEPT_KEYWORDS = [
+        ...new Set([
+            ...Object.values(ACCEPT_KEYWORDS).flat(),
+            'accept', 'agree', 'allow', 'consent', 'okay'  // Single-word fallbacks
+        ])
+    ];
+
+    // Exclusion keywords (do NOT click these)
+    const EXCLUSION_KEYWORDS = [
+        'policy', 'privacy', 'terms', 'conditions', 'learn more', 'more info',
+        'settings', 'preferences', 'customize', 'customise', 'manage', 'options',
+        'reject', 'decline', 'deny', 'refuse', 'necessary only', 'essential only',
+        'read more', 'find out', 'details', 'about cookies', 'more information',
+        'datenschutz', 'impressum', 'cookie settings', 'manage cookies'
+    ];
+
+    // Cookie-related context keywords (for scoring parent elements)
+    const CONTEXT_KEYWORDS = /cookie|consent|gdpr|privacy|banner|notice|ccpa|dsgvo/i;
+
+    // ================================
+    // Fast-Path CMP Configs (Minimal)
+    // Well-known frameworks with deterministic selectors
+    // ================================
+
+    const FAST_PATH_CMPS = [
         // Framer Cookie Banner (tebi.com, etc.)
         {
             name: 'Framer',
             detect: () => document.querySelector('#__framer-cookie-component-button-accept, .__framer-cookie-component-button'),
-            accept: () => {
-                const btn = document.querySelector('#__framer-cookie-component-button-accept');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('#__framer-cookie-component-button-accept')
         },
         // OneTrust
         {
             name: 'OneTrust',
             detect: () => document.querySelector('#onetrust-consent-sdk, #onetrust-banner-sdk'),
-            accept: () => {
-                const btn = document.querySelector('#onetrust-accept-btn-handler, .onetrust-close-btn-handler, #accept-recommended-btn-handler');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('#onetrust-accept-btn-handler, .onetrust-close-btn-handler, #accept-recommended-btn-handler')
         },
         // Cookiebot
         {
             name: 'Cookiebot',
             detect: () => document.querySelector('#CybotCookiebotDialog'),
-            accept: () => {
-                const btn = document.querySelector('#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll, #CybotCookiebotDialogBodyButtonAccept, .CybotCookiebotDialogBodyButton[id*="Accept"]');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll, #CybotCookiebotDialogBodyButtonAccept, .CybotCookiebotDialogBodyButton[id*="Accept"]')
         },
         // TrustArc
         {
             name: 'TrustArc',
             detect: () => document.querySelector('.truste_box_overlay, #truste-consent-track, .trustarc-banner-container'),
-            accept: () => {
-                const btn = document.querySelector('.truste_acceptButton, #truste-consent-button, .trustarc-agree-btn, a[class*="acceptAll"]');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('.truste_acceptButton, #truste-consent-button, .trustarc-agree-btn, a[class*="acceptAll"]')
         },
         // CookieYes
         {
             name: 'CookieYes',
             detect: () => document.querySelector('.cky-consent-container, .cky-consent-bar'),
-            accept: () => {
-                const btn = document.querySelector('.cky-btn-accept, [data-cky-tag="accept-button"]');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('.cky-btn-accept, [data-cky-tag="accept-button"]')
         },
         // iubenda
         {
             name: 'iubenda',
             detect: () => document.querySelector('#iubenda-cs-banner'),
-            accept: () => {
-                const btn = document.querySelector('.iubenda-cs-accept-btn, #iubenda-cs-accept-btn');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('.iubenda-cs-accept-btn, #iubenda-cs-accept-btn')
         },
         // Usercentrics
         {
             name: 'Usercentrics',
             detect: () => document.querySelector('#usercentrics-root'),
             accept: () => {
-                // Usercentrics uses shadow DOM
                 const root = document.querySelector('#usercentrics-root');
-                if (root && root.shadowRoot) {
+                if (root?.shadowRoot) {
                     const btn = root.shadowRoot.querySelector('[data-testid="uc-accept-all-button"], button[class*="accept"]');
                     if (btn) { btn.click(); return true; }
                 }
@@ -95,141 +118,85 @@
         {
             name: 'Quantcast',
             detect: () => document.querySelector('.qc-cmp2-container, .qc-cmp-ui-container'),
-            accept: () => {
-                const btn = document.querySelector('.qc-cmp2-summary-buttons button[mode="primary"], .qc-cmp2-button[mode="primary"], .qc-cmp-button[mode="primary"]');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('.qc-cmp2-summary-buttons button[mode="primary"], .qc-cmp2-button[mode="primary"], .qc-cmp-button[mode="primary"]')
         },
         // Didomi
         {
             name: 'Didomi',
             detect: () => document.querySelector('#didomi-popup, #didomi-host'),
-            accept: () => {
-                const btn = document.querySelector('#didomi-notice-agree-button, [id*="didomi"][id*="agree"], .didomi-continue-without-agreeing');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('#didomi-notice-agree-button, [id*="didomi"][id*="agree"], .didomi-continue-without-agreeing')
         },
         // Osano
         {
             name: 'Osano',
             detect: () => document.querySelector('.osano-cm-window, .osano-cm-dialog'),
-            accept: () => {
-                const btn = document.querySelector('.osano-cm-accept-all, .osano-cm-accept');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('.osano-cm-accept-all, .osano-cm-accept')
         },
         // Klaro
         {
             name: 'Klaro',
             detect: () => document.querySelector('.klaro .cookie-notice, .klaro .cookie-modal'),
-            accept: () => {
-                const btn = document.querySelector('.klaro .cm-btn-accept-all, .klaro .cm-btn-accept, .klaro button[class*="accept"]');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('.klaro .cm-btn-accept-all, .klaro .cm-btn-accept, .klaro button[class*="accept"]')
         },
         // Termly
         {
             name: 'Termly',
             detect: () => document.querySelector('#termly-code-snippet-support, .termly-consent-banner'),
-            accept: () => {
-                const btn = document.querySelector('[data-tid="accept-all"], .t-acceptAllButton, button[class*="termly"][class*="accept"]');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('[data-tid="accept-all"], .t-acceptAllButton, button[class*="termly"][class*="accept"]')
         },
         // Complianz
         {
             name: 'Complianz',
             detect: () => document.querySelector('#cmplz-cookiebanner-container, .cmplz-cookiebanner'),
-            accept: () => {
-                const btn = document.querySelector('.cmplz-accept, .cmplz-btn.cmplz-accept-all, button.cmplz-accept');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('.cmplz-accept, .cmplz-btn.cmplz-accept-all, button.cmplz-accept')
         },
         // Cookie Script
         {
             name: 'CookieScript',
             detect: () => document.querySelector('#cookiescript_injected'),
-            accept: () => {
-                const btn = document.querySelector('#cookiescript_accept, .cookiescript_accept');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('#cookiescript_accept, .cookiescript_accept')
         },
         // CIVIC Cookie Control
         {
             name: 'CIVIC',
             detect: () => document.querySelector('#ccc, #catapult-cookie-bar'),
-            accept: () => {
-                const btn = document.querySelector('#ccc-recommended-settings, .ccc-accept-button, #catapultCookie');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('#ccc-recommended-settings, .ccc-accept-button, #catapultCookie')
         },
         // Borlabs Cookie (WordPress)
         {
             name: 'Borlabs',
             detect: () => document.querySelector('#BorlabsCookieBox'),
-            accept: () => {
-                const btn = document.querySelector('a[data-borlabs-cookie-accept-all], ._brlbs-btn-accept-all');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('a[data-borlabs-cookie-accept-all], ._brlbs-btn-accept-all')
         },
         // Cookie Notice for GDPR
         {
             name: 'CookieNotice',
             detect: () => document.querySelector('#cookie-notice, #cookie-law-info-bar'),
-            accept: () => {
-                const btn = document.querySelector('#cn-accept-cookie, #cookie_action_close_header, .cn-set-cookie');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('#cn-accept-cookie, #cookie_action_close_header, .cn-set-cookie')
         },
         // GDPR Cookie Consent
         {
             name: 'GDPRCookieConsent',
             detect: () => document.querySelector('.gdpr-cookie-notice, #moove_gdpr_cookie_info_bar'),
-            accept: () => {
-                const btn = document.querySelector('.gdpr-cookie-notice-accept, #moove_gdpr_cookie_accept');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('.gdpr-cookie-notice-accept, #moove_gdpr_cookie_accept')
         },
         // Axeptio
         {
             name: 'Axeptio',
             detect: () => document.querySelector('#axeptio_overlay, [class*="axeptio"]'),
-            accept: () => {
-                const btn = document.querySelector('[class*="axeptio"][class*="accept"], button[class*="Axeptio"]');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('[class*="axeptio"][class*="accept"], button[class*="Axeptio"]')
         },
         // Sirdata
         {
             name: 'Sirdata',
             detect: () => document.querySelector('#sd-cmp, .sd-cmp-banner'),
-            accept: () => {
-                const btn = document.querySelector('#sd-cmp-accept-all, .sd-cmp-accept');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('#sd-cmp-accept-all, .sd-cmp-accept')
         },
         // Commanders Act
         {
             name: 'CommandersAct',
             detect: () => document.querySelector('#privacy-banner, [id*="commanders"]'),
-            accept: () => {
-                const btn = document.querySelector('#privacy-accept, [id*="commanders"][id*="accept"]');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('#privacy-accept, [id*="commanders"][id*="accept"]')
         },
         // Substack (Pencraft design system)
         {
@@ -253,357 +220,345 @@
         {
             name: 'Sourcepoint',
             detect: () => document.querySelector('[class*="sp_message_container"], .message-component'),
-            accept: () => {
-                const btn = document.querySelector('button[title="Accept all"], button[title="Accept"], [class*="sp_choice_type_11"]');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('button[title="Accept all"], button[title="Accept"], [class*="sp_choice_type_11"]')
         },
         // HubSpot Cookie Banner
         {
             name: 'HubSpot',
             detect: () => document.querySelector('#hs-eu-cookie-confirmation'),
-            accept: () => {
-                const btn = document.querySelector('#hs-eu-confirmation-button');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('#hs-eu-confirmation-button')
         },
         // Cookie Control (Silktide)
         {
             name: 'Silktide',
             detect: () => document.querySelector('#ccc-notify, .ccc-notify'),
-            accept: () => {
-                const btn = document.querySelector('.ccc-notify-button, #ccc-notify-accept');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('.ccc-notify-button, #ccc-notify-accept')
         },
         // Shopify Cookie Banner
         {
             name: 'Shopify',
             detect: () => document.querySelector('.shopify-cookie-consent, [class*="cookie-consent-shopify"]'),
-            accept: () => {
-                const btn = document.querySelector('.shopify-cookie-consent button[type="submit"], [class*="cookie-consent"] button');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
+            accept: () => clickIfExists('.shopify-cookie-consent button[type="submit"], [class*="cookie-consent"] button')
         }
     ];
 
-    // ================================
-    // Generic Consent Detection
-    // ================================
-
-    const ACCEPT_KEYWORDS = [
-        'accept all',
-        'accept cookies',
-        'accept & continue',
-        'accept and continue',
-        'accept and close',
-        'agree to all',
-        'agree all',
-        'agree & proceed',
-        'allow all',
-        'allow cookies',
-        'allow all cookies',
-        'i agree',
-        'i accept',
-        'i understand',
-        'got it',
-        'okay',
-        'ok, got it',
-        'ok',
-        'consent',
-        'continue',
-        'enable all',
-        'yes, i agree',
-        'yes, accept',
-        'accept recommended',
-        'accept suggested',
-        'akzeptieren',      // German
-        'alle akzeptieren',
-        'accepter',         // French
-        'tout accepter',
-        'accepteren',       // Dutch
-        'alle accepteren',
-        'aceptar',          // Spanish
-        'aceptar todo',
-        'accetta',          // Italian
-        'accetta tutto',
-        'aceitar',          // Portuguese
-        'aceitar tudo',
-        'zaakceptuj',       // Polish
-        'akceptuję',
-        'accept',           // Standalone accept (for simple banners like Substack)
-        'agree',            // Standalone agree
-        'понятно',          // Russian - "understood"
-        'принять',          // Russian - "accept"
-        'kabul et',         // Turkish
-        'tümünü kabul et',
-        'godta alle',       // Norwegian
-        'acceptera',        // Swedish
-        'acceptera alla',
-        'hyväksy',          // Finnish
-        'hyväksy kaikki'
-    ];
-
-    const CLOSE_KEYWORDS = [
-        'dismiss',
-        'close',
-        '✕',
-        '×',
-        'x',
-        '✖'
-    ];
-
-    // Keywords that indicate a link leads to a policy/settings page (should not be clicked)
-    const POLICY_LINK_KEYWORDS = [
-        'policy', 'privacy', 'terms', 'conditions', 'learn more',
-        'more info', 'more information', 'details', 'about cookies',
-        'read more', 'find out', 'cookie settings', 'manage', 'preferences',
-        'customize', 'customise', 'options', 'datenschutz', 'impressum',
-        'how we use', 'why we use', 'what are cookies', 'settings'
-    ];
-
-    // Elements that commonly contain cookie banners
-    const BANNER_SELECTORS = [
-        '[class*="cookie"]',
-        '[class*="consent"]',
-        '[class*="gdpr"]',
-        '[class*="privacy"]',
-        '[id*="cookie"]',
-        '[id*="consent"]',
-        '[id*="gdpr"]',
-        '[id*="privacy"]',
-        '[aria-label*="cookie" i]',
-        '[aria-label*="consent" i]',
-        '[role="dialog"][aria-modal="true"]'
-    ];
+    function clickIfExists(selector) {
+        const el = document.querySelector(selector);
+        if (el) { el.click(); return true; }
+        return false;
+    }
 
     // ================================
     // Helper Functions
     // ================================
 
     function log(message, ...args) {
-        // Uncomment for debugging
         // console.log(`[Cookie Cutter] ${message}`, ...args);
     }
 
     function isVisible(element) {
         if (!element) return false;
         const style = window.getComputedStyle(element);
-        return style.display !== 'none' &&
-            style.visibility !== 'hidden' &&
-            style.opacity !== '0' &&
-            element.offsetParent !== null;
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+            return false;
+        }
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
     }
 
-    function clickElement(element) {
-        if (!element) return false;
-        try {
-            element.click();
-            return true;
-        } catch (e) {
-            try {
-                element.dispatchEvent(new MouseEvent('click', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window
-                }));
-                return true;
-            } catch (e2) {
-                return false;
+    function getElementText(el) {
+        return (el.textContent || el.value || el.innerText || '').toLowerCase().trim();
+    }
+
+    function getElementContext(el) {
+        const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+        const title = (el.getAttribute('title') || '').toLowerCase();
+        return getElementText(el) + ' ' + ariaLabel + ' ' + title;
+    }
+
+    // ================================
+    // Banner Discovery
+    // ================================
+
+    function findCookieBanners() {
+        const candidates = [];
+        const checked = new Set();
+
+        // Strategy 1: Direct class/id matching
+        const directMatches = document.querySelectorAll(
+            '[class*="cookie" i], [class*="consent" i], [class*="gdpr" i], [class*="privacy-banner" i], ' +
+            '[id*="cookie" i], [id*="consent" i], [id*="gdpr" i], ' +
+            '[aria-label*="cookie" i], [aria-label*="consent" i]'
+        );
+
+        for (const el of directMatches) {
+            if (isVisible(el) && !checked.has(el)) {
+                candidates.push({ element: el, score: 20, reason: 'direct-match' });
+                checked.add(el);
             }
         }
+
+        // Strategy 2: Fixed/sticky positioned elements at viewport edges
+        const allElements = document.querySelectorAll('div, aside, section, footer, header');
+        for (const el of allElements) {
+            if (checked.has(el)) continue;
+
+            const style = getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+
+            const isFixed = style.position === 'fixed' || style.position === 'sticky';
+            const hasHighZ = parseInt(style.zIndex) > 100 || style.zIndex === 'auto';
+            const isAtEdge = rect.top < 150 || rect.bottom > window.innerHeight - 150;
+
+            if (isFixed && isAtEdge && hasCookieContent(el)) {
+                candidates.push({ element: el, score: 15, reason: 'visual-heuristic' });
+                checked.add(el);
+            }
+        }
+
+        // Strategy 3: Modal dialogs
+        const dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"], .modal, .overlay');
+        for (const el of dialogs) {
+            if (checked.has(el)) continue;
+            if (isVisible(el) && hasCookieContent(el)) {
+                candidates.push({ element: el, score: 15, reason: 'dialog' });
+                checked.add(el);
+            }
+        }
+
+        // Strategy 4: Shadow DOM traversal (with protection)
+        const shadowHosts = document.querySelectorAll('*');
+        for (const host of shadowHosts) {
+            if (host.shadowRoot && !checked.has(host)) {
+                const shadowBanners = findBannersInShadow(host.shadowRoot, 0);
+                for (const banner of shadowBanners) {
+                    candidates.push({ element: banner.element, score: banner.score, reason: 'shadow-dom' });
+                }
+            }
+        }
+
+        return candidates;
     }
 
-    function findButtonByText(keywords, container = document) {
-        // First priority: actual buttons and inputs (not links) - these are safe to click
-        const realButtons = container.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]');
+    function findBannersInShadow(shadowRoot, depth) {
+        if (depth > 3) return []; // Prevent deep recursion
 
-        for (const btn of realButtons) {
+        const banners = [];
+        const elements = shadowRoot.querySelectorAll('*');
+
+        for (const el of elements) {
+            const classId = ((el.className || '') + ' ' + (el.id || '')).toLowerCase();
+            if (CONTEXT_KEYWORDS.test(classId) && isVisible(el)) {
+                banners.push({ element: el, score: 15 });
+            }
+
+            // Recurse into nested shadow roots
+            if (el.shadowRoot) {
+                banners.push(...findBannersInShadow(el.shadowRoot, depth + 1));
+            }
+        }
+
+        return banners;
+    }
+
+    function hasCookieContent(el) {
+        const text = (el.innerText || '').toLowerCase();
+        return CONTEXT_KEYWORDS.test(text);
+    }
+
+    // ================================
+    // Button Scoring System
+    // ================================
+
+    function scoreButton(btn, containerScore = 0) {
+        let score = containerScore;
+
+        const text = getElementContext(btn);
+
+        // Early exit: Exclusion keywords
+        if (EXCLUSION_KEYWORDS.some(kw => text.includes(kw))) {
+            return -100;
+        }
+
+        // Check href for policy links
+        if (btn.tagName === 'A') {
+            const href = (btn.getAttribute('href') || '').toLowerCase();
+            if (EXCLUSION_KEYWORDS.some(kw => href.includes(kw))) {
+                return -100;
+            }
+        }
+
+        // Accept keyword matching
+        const buttonText = getElementText(btn);
+
+        // Exact match (highest score)
+        if (ALL_ACCEPT_KEYWORDS.some(kw => buttonText === kw)) {
+            score += 60;
+        }
+        // Starts with accept keyword
+        else if (ALL_ACCEPT_KEYWORDS.some(kw => buttonText.startsWith(kw))) {
+            score += 50;
+        }
+        // Contains accept keyword
+        else if (ALL_ACCEPT_KEYWORDS.some(kw => buttonText.includes(kw))) {
+            score += 40;
+        }
+
+        // Element type scoring
+        const tag = btn.tagName.toLowerCase();
+        if (tag === 'button') {
+            score += 15;
+        } else if (tag === 'input' && ['button', 'submit'].includes(btn.type)) {
+            score += 15;
+        } else if (tag === 'a') {
+            score -= 10; // Links are riskier
+        }
+
+        // Visual emphasis (filled background = primary button)
+        try {
+            const style = getComputedStyle(btn);
+            const bg = style.backgroundColor;
+            const isPrimary = bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'rgb(255, 255, 255)';
+            if (isPrimary) score += 10;
+        } catch (e) { /* ignore */ }
+
+        // Context scoring: check parent hierarchy
+        let parent = btn.parentElement;
+        for (let i = 0; i < 6 && parent; i++) {
+            const classId = ((parent.className || '') + ' ' + (parent.id || '')).toLowerCase();
+            if (CONTEXT_KEYWORDS.test(classId)) {
+                score += 25 - (i * 3); // Closer parents score higher
+                break;
+            }
+            parent = parent.parentElement;
+        }
+
+        return score;
+    }
+
+    function findBestButton(container) {
+        const buttons = container.querySelectorAll(
+            'button, [role="button"], input[type="button"], input[type="submit"], a'
+        );
+
+        let bestScore = 0;
+        let bestButton = null;
+
+        for (const btn of buttons) {
             if (!isVisible(btn)) continue;
 
-            const text = (btn.textContent || btn.value || btn.innerText || '').toLowerCase().trim();
-            const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
-            const title = (btn.getAttribute('title') || '').toLowerCase();
+            const score = scoreButton(btn, 0);
+            log(`Button "${getElementText(btn)}" score: ${score}`);
 
-            for (const keyword of keywords) {
-                if (text.includes(keyword) || ariaLabel.includes(keyword) || title.includes(keyword)) {
-                    return btn;
-                }
+            if (score > bestScore) {
+                bestScore = score;
+                bestButton = btn;
             }
         }
 
-        // Second priority: links (with strict filtering to avoid policy/navigation links)
-        const links = container.querySelectorAll('a');
-        for (const link of links) {
-            if (!isVisible(link)) continue;
-
-            const text = (link.textContent || link.innerText || '').toLowerCase().trim();
-            const href = (link.getAttribute('href') || '').toLowerCase();
-
-            // Skip if link looks like it navigates to a policy/settings page
-            const isPolicyLink = POLICY_LINK_KEYWORDS.some(keyword =>
-                text.includes(keyword) || href.includes(keyword)
-            );
-            if (isPolicyLink) continue;
-
-            const ariaLabel = (link.getAttribute('aria-label') || '').toLowerCase();
-            const title = (link.getAttribute('title') || '').toLowerCase();
-
-            for (const keyword of keywords) {
-                if (text.includes(keyword) || ariaLabel.includes(keyword) || title.includes(keyword)) {
-                    return link;
-                }
-            }
-        }
-
-        return null;
+        return { button: bestButton, score: bestScore };
     }
 
-    function removeOverlay() {
-        // Fix body scroll if locked
+    // ================================
+    // Main Accept Logic
+    // ================================
+
+    function tryFastPath() {
+        for (const cmp of FAST_PATH_CMPS) {
+            try {
+                if (cmp.detect()) {
+                    log(`Fast-path: Detected ${cmp.name}`);
+                    if (cmp.accept()) {
+                        log(`Fast-path: Accepted ${cmp.name}`);
+                        return true;
+                    }
+                }
+            } catch (e) {
+                log(`Fast-path error with ${cmp.name}:`, e);
+            }
+        }
+        return false;
+    }
+
+    function tryGeneralizedAccept() {
+        const banners = findCookieBanners();
+        log(`Found ${banners.length} cookie banner candidates`);
+
+        let globalBestScore = 0;
+        let globalBestButton = null;
+
+        for (const banner of banners) {
+            const { button, score } = findBestButton(banner.element);
+            const totalScore = score + banner.score;
+
+            if (totalScore > globalBestScore) {
+                globalBestScore = totalScore;
+                globalBestButton = button;
+            }
+        }
+
+        // Minimum threshold to click
+        const THRESHOLD = 35;
+
+        if (globalBestScore >= THRESHOLD && globalBestButton) {
+            log(`Clicking button with score ${globalBestScore}: "${getElementText(globalBestButton)}"`);
+            globalBestButton.click();
+            clickCount++;
+            return true;
+        }
+
+        log(`No button met threshold (best: ${globalBestScore})`);
+        return false;
+    }
+
+    function removeScrollLocks() {
         const html = document.documentElement;
         const body = document.body;
 
         if (html) {
             html.style.overflow = '';
-            html.classList.remove('cookie-consent-active', 'cookie-modal-open', 'gdpr-active', 'no-scroll');
+            html.classList.remove('cookie-consent-active', 'modal-open', 'no-scroll');
         }
 
         if (body) {
             body.style.overflow = '';
             body.style.position = '';
-            body.classList.remove('cookie-consent-active', 'cookie-modal-open', 'gdpr-active', 'no-scroll', 'modal-open');
+            body.classList.remove('cookie-consent-active', 'modal-open', 'no-scroll', 'overflow-hidden');
         }
     }
 
     function notifyBackground() {
         try {
             chrome.runtime.sendMessage({ type: 'COOKIE_ACCEPTED' });
-        } catch (e) {
-            // Extension context may be invalidated
-        }
-    }
-
-    // ================================
-    // Main Accept Functions
-    // ================================
-
-    function tryAcceptKnownCMP() {
-        for (const cmp of CMP_CONFIGS) {
-            try {
-                if (cmp.detect()) {
-                    log(`Detected ${cmp.name}`);
-                    if (cmp.accept()) {
-                        log(`Accepted ${cmp.name} cookies`);
-                        return true;
-                    }
-                }
-            } catch (e) {
-                log(`Error with ${cmp.name}:`, e);
-            }
-        }
-        return false;
-    }
-
-    function tryGenericAccept() {
-        // Find cookie banner containers
-        const containers = document.querySelectorAll(BANNER_SELECTORS.join(', '));
-
-        for (const container of containers) {
-            if (!isVisible(container)) continue;
-
-            // Look for accept button within container
-            const btn = findButtonByText(ACCEPT_KEYWORDS, container);
-            if (btn) {
-                log('Found generic accept button:', btn.textContent);
-                if (clickElement(btn)) {
-                    return true;
-                }
-            }
-        }
-
-        // Try finding accept buttons in the whole document
-        const btn = findButtonByText(ACCEPT_KEYWORDS);
-        if (btn) {
-            // Verify it's likely a cookie consent button by checking parent elements
-            let parent = btn.parentElement;
-            let looksLikeCookieBanner = false;
-
-            for (let i = 0; i < 10 && parent; i++) {
-                const id = (parent.id || '').toLowerCase();
-                const className = (parent.className || '').toLowerCase();
-
-                if (id.includes('cookie') || id.includes('consent') || id.includes('gdpr') || id.includes('privacy') ||
-                    className.includes('cookie') || className.includes('consent') || className.includes('gdpr') || className.includes('privacy')) {
-                    looksLikeCookieBanner = true;
-                    break;
-                }
-                parent = parent.parentElement;
-            }
-
-            if (looksLikeCookieBanner) {
-                log('Found cookie-related accept button:', btn.textContent);
-                if (clickElement(btn)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    function tryCloseButton() {
-        // Look for close buttons as last resort
-        const containers = document.querySelectorAll(BANNER_SELECTORS.join(', '));
-
-        for (const container of containers) {
-            if (!isVisible(container)) continue;
-
-            const btn = findButtonByText(CLOSE_KEYWORDS, container);
-            if (btn) {
-                log('Found close button:', btn.textContent);
-                if (clickElement(btn)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
+        } catch (e) { /* Extension context may be invalidated */ }
     }
 
     function acceptCookies() {
-        if (hasAccepted || !isEnabled) return;
+        if (hasAccepted || !isEnabled || clickCount >= MAX_CLICKS) return;
 
-        // Try known CMP frameworks first
-        if (tryAcceptKnownCMP()) {
+        // Try fast-path CMPs first
+        if (tryFastPath()) {
             hasAccepted = true;
-            removeOverlay();
+            removeScrollLocks();
             notifyBackground();
             return;
         }
 
-        // Try generic detection
-        if (tryGenericAccept()) {
-            hasAccepted = true;
-            removeOverlay();
-            notifyBackground();
+        // Fall back to generalized detection
+        if (tryGeneralizedAccept()) {
+            // Don't set hasAccepted yet - verify banner is gone
+            setTimeout(() => {
+                const banners = findCookieBanners();
+                if (banners.length === 0 || clickCount >= MAX_CLICKS) {
+                    hasAccepted = true;
+                    removeScrollLocks();
+                    notifyBackground();
+                }
+            }, 500);
             return;
         }
 
-        // Try close button as fallback
-        if (tryCloseButton()) {
-            hasAccepted = true;
-            removeOverlay();
-            notifyBackground();
-            return;
-        }
-
-        // Always try to remove overlay/scroll lock
-        removeOverlay();
+        removeScrollLocks();
     }
 
     // ================================
@@ -611,22 +566,19 @@
     // ================================
 
     let observer = null;
-    let observerTimeout = null;
+    let debounceTimer = null;
 
     function setupObserver() {
         if (observer) return;
 
-        observer = new MutationObserver((mutations) => {
-            if (hasAccepted) {
+        observer = new MutationObserver(() => {
+            if (hasAccepted || clickCount >= MAX_CLICKS) {
                 observer.disconnect();
                 return;
             }
 
-            // Debounce observer callback
-            if (observerTimeout) clearTimeout(observerTimeout);
-            observerTimeout = setTimeout(() => {
-                acceptCookies();
-            }, 100);
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(acceptCookies, 150);
         });
 
         observer.observe(document.body || document.documentElement, {
@@ -634,13 +586,13 @@
             subtree: true
         });
 
-        // Auto-disconnect after 10 seconds
+        // Auto-disconnect after 15 seconds
         setTimeout(() => {
             if (observer) {
                 observer.disconnect();
                 observer = null;
             }
-        }, 10000);
+        }, 15000);
     }
 
     // ================================
@@ -648,35 +600,26 @@
     // ================================
 
     function init() {
-        // Check extension status
         try {
             chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (response) => {
-                if (response && response.enabled === false) {
+                if (response?.enabled === false) {
                     isEnabled = false;
                     return;
                 }
                 runAcceptance();
             });
         } catch (e) {
-            // Extension context may not be available
             runAcceptance();
         }
     }
 
     function runAcceptance() {
-        // First attempt - immediate
-        acceptCookies();
-
-        // Second attempt - after short delay (for async-loaded banners)
-        setTimeout(acceptCookies, 500);
-
-        // Third attempt - after longer delay
+        // Wait for page to stabilize
+        setTimeout(acceptCookies, 300);
+        setTimeout(acceptCookies, 800);
         setTimeout(acceptCookies, 1500);
-
-        // Fourth attempt - final sweep
         setTimeout(acceptCookies, 3000);
 
-        // Setup mutation observer for dynamically added popups
         if (document.body) {
             setupObserver();
         } else {
@@ -684,14 +627,12 @@
         }
     }
 
-    // Run when DOM is ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
     }
 
-    // Also run on window load for late-loading popups
     window.addEventListener('load', () => {
         setTimeout(acceptCookies, 500);
     });
