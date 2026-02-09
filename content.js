@@ -67,6 +67,24 @@
         /^(принять|согласен)$/i,
     ];
 
+    // Buttons that confirm/save consent (for multi-step CMPs like Ketch)
+    const SAVE_PATTERNS = [
+        /^save(\s+(choices|preferences|settings|selection))?$/i,
+        /^confirm(\s+(choices|preferences|selection|my\s+choice))?$/i,
+        /^submit$/i,
+        /^done$/i,
+        /^close$/i,
+        // German
+        /^(auswahl\s+)?speichern$/i,
+        /^bestätigen$/i,
+        // French
+        /^sauvegarder$/i,
+        /^confirmer$/i,
+        // Dutch
+        /^opslaan$/i,
+        /^bevestigen$/i,
+    ];
+
     // Keywords that should NEVER be clicked
     const EXCLUSION_PATTERNS = [
         // Settings/preferences
@@ -132,12 +150,20 @@
         if (!text.trim()) {
             text = el.textContent || el.innerText || '';
         }
-        // Also check aria-label and value
-        const ariaLabel = el.getAttribute('aria-label') || '';
-        const value = el.getAttribute('value') || '';
-        const title = el.getAttribute('title') || '';
-        
-        return (text + ' ' + ariaLabel + ' ' + value + ' ' + title).trim().toLowerCase();
+        text = text.trim().toLowerCase();
+
+        // Also check aria-label, value, title — but only add if not already in text
+        // (avoids duplication e.g. Ketch CMP where aria-label == visible text)
+        const ariaLabel = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+        const value = (el.getAttribute('value') || '').trim().toLowerCase();
+        const title = (el.getAttribute('title') || '').trim().toLowerCase();
+
+        const parts = [text];
+        if (ariaLabel && !text.includes(ariaLabel)) parts.push(ariaLabel);
+        if (value && !text.includes(value)) parts.push(value);
+        if (title && !text.includes(title)) parts.push(title);
+
+        return parts.join(' ').trim();
     }
 
     // ================================
@@ -159,6 +185,15 @@
      */
     function isExcludedButton(buttonText) {
         return EXCLUSION_PATTERNS.some(pattern => pattern.test(buttonText));
+    }
+
+    /**
+     * Check if button text matches save/confirm patterns (for multi-step CMPs)
+     */
+    function isSaveButton(buttonText) {
+        const text = buttonText.trim().toLowerCase();
+        if (!text || text.length > 50) return false;
+        return SAVE_PATTERNS.some(pattern => pattern.test(text));
     }
 
     /**
@@ -331,6 +366,26 @@
     // Main Accept Logic
     // ================================
 
+    /**
+     * Find a save/confirm button in cookie context (for multi-step CMPs)
+     */
+    function findSaveButton() {
+        const clickables = document.querySelectorAll(
+            'button, [role="button"], input[type="button"], input[type="submit"]'
+        );
+
+        for (const el of clickables) {
+            if (!isVisible(el)) continue;
+            const buttonText = getButtonText(el);
+            if (!isSaveButton(buttonText)) continue;
+            if (!hasCookieContext(el)) continue;
+
+            log(`Found save button: "${buttonText}"`);
+            return el;
+        }
+        return null;
+    }
+
     function acceptCookies() {
         if (hasAccepted || !isEnabled) return;
 
@@ -340,9 +395,10 @@
             const best = candidates[0];
             log(`Clicking: "${best.text}" (score: ${best.score})`);
             best.element.click();
-            hasAccepted = true;
-            cleanup();
-            notifyBackground();
+
+            // Some CMPs (e.g. Ketch) need a follow-up "Save" click.
+            // Use a MutationObserver to detect when the save button appears/updates.
+            waitForSaveButton();
             return;
         }
 
@@ -428,18 +484,26 @@
     }
 
     // ================================
-    // MutationObserver
+    // Observers
     // ================================
 
     let observer = null;
     let debounceTimer = null;
 
+    /**
+     * Watch for DOM changes and try to accept cookies when new elements appear.
+     * Auto-disconnects after 15 seconds or on success.
+     */
     function setupObserver() {
         if (observer) return;
 
+        const maxTime = 15000;
+        const startTime = Date.now();
+
         observer = new MutationObserver(() => {
-            if (hasAccepted) {
+            if (hasAccepted || Date.now() - startTime > maxTime) {
                 observer.disconnect();
+                observer = null;
                 return;
             }
             clearTimeout(debounceTimer);
@@ -450,13 +514,49 @@
             childList: true,
             subtree: true
         });
+    }
 
-        setTimeout(() => {
-            if (observer) {
-                observer.disconnect();
-                observer = null;
+    /**
+     * After clicking accept, watch for a save/confirm button to appear.
+     * Uses a MutationObserver instead of a blind timer.
+     */
+    function waitForSaveButton() {
+        // Check immediately first
+        const immediate = findSaveButton();
+        if (immediate) {
+            log(`Clicking save button: "${getButtonText(immediate)}"`);
+            immediate.click();
+            hasAccepted = true;
+            cleanup();
+            notifyBackground();
+            return;
+        }
+
+        // Watch for DOM changes (button may update after accept click)
+        let saveObserver = new MutationObserver(() => {
+            const saveBtn = findSaveButton();
+            if (saveBtn) {
+                saveObserver.disconnect();
+                log(`Clicking save button: "${getButtonText(saveBtn)}"`);
+                saveBtn.click();
+                hasAccepted = true;
+                cleanup();
+                notifyBackground();
+                return;
             }
-        }, 15000);
+        });
+
+        saveObserver.observe(document.body, { childList: true, subtree: true, attributes: true });
+
+        // Safety: give up after 3 seconds — accept-only CMP, no save needed
+        setTimeout(() => {
+            saveObserver.disconnect();
+            if (!hasAccepted) {
+                hasAccepted = true;
+                cleanup();
+                notifyBackground();
+            }
+        }, 3000);
     }
 
     // ================================
@@ -482,35 +582,37 @@
             document.addEventListener('visibilitychange', function handler() {
                 if (document.visibilityState === 'visible') {
                     document.removeEventListener('visibilitychange', handler);
-                    runAcceptanceDelayed();
+                    startAcceptance();
                 }
             });
             return;
         }
-        runAcceptanceDelayed();
+        startAcceptance();
     }
 
-    function runAcceptanceDelayed() {
-        setTimeout(acceptCookies, 300);
-        setTimeout(acceptCookies, 800);
-        setTimeout(acceptCookies, 1500);
-        setTimeout(acceptCookies, 3000);
+    function startAcceptance() {
+        // Try immediately with whatever DOM is available
+        acceptCookies();
 
+        // Observe future DOM changes for late-loading banners
         if (document.body) {
             setupObserver();
         } else {
-            document.addEventListener('DOMContentLoaded', setupObserver);
+            document.addEventListener('DOMContentLoaded', () => {
+                acceptCookies();
+                setupObserver();
+            });
         }
     }
 
+    // Kick off on DOMContentLoaded or immediately if already loaded
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
     }
 
-    window.addEventListener('load', () => {
-        setTimeout(acceptCookies, 500);
-    });
+    // Final attempt on full page load (images, fonts, etc.)
+    window.addEventListener('load', acceptCookies);
 
 })();
